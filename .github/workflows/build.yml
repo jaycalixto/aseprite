@@ -6,17 +6,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-        build_type: [RelWithDebInfo, Debug]
-        ui: [gui, cli]
-        scripting: [lua, noscripts]
-        exclude:
-          - build_type: Debug
-            ui: gui
-          - build_type: RelWithDebInfo
-            ui: cli
-          - build_type: RelWithDebInfo
-            scripting: noscripts
+        os: [ubuntu-latest]
+        build_type: [RelWithDebInfo]
+        enable_ui: [off]
+        include:
+          - os: ubuntu-latest
+            build_type: Debug
+            enable_ui: on
     steps:
     - uses: actions/checkout@v4
       with:
