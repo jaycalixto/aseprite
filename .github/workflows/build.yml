@@ -116,4 +116,4 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: /home/runner/work/aseprite/aseprite/build/bin/aseprite
         asset_name: ${{ matrix.asset_name }}
-        tag: ${{ github.ref }}
+        tag: v${{ github.run_number }}
