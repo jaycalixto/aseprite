@@ -114,6 +114,6 @@ jobs:
       uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: aseprite/build/bin/aseprite
+        file: /home/runner/work/aseprite/aseprite/build/bin/aseprite
         asset_name: ${{ matrix.asset_name }}
         tag: ${{ github.ref }}
