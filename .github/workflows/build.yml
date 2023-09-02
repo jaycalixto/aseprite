@@ -70,12 +70,10 @@ jobs:
         export ASEPRITE=$PWD/build/bin/aseprite
         cd tests
         $XVFB bash run-tests.sh
-    - name: Upload release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload to Release Action
+      uses: Shopify/upload-to-release@v1.0.1
       with:
-        upload_url: ${{ needs.check-version.outputs.upload_url }}
-        asset_path: aseprite/build/bin/Aseprite-${{ needs.check-version.outputs.latest_tag }}-${{ runner.os }}.zip
-        asset_name: Aseprite-${{ needs.check-version.outputs.latest_tag }}-${{ runner.os }}.zip
-        asset_content_type: application/zip
+        name: aseprite
+        path: $ASEPRITE/aseprite
+        content-type: application/octet-stream
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
