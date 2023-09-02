@@ -6,9 +6,12 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
+    strategy:    
+      fail-fast: false      
       matrix:
+        include:
+          - artifact_name: aseprite
+          - asset_name: aseprite-linux-amd64
         os: [ubuntu-latest]
         build_type: [RelWithDebInfo]
         enable_ui: [off]
@@ -107,32 +110,11 @@ jobs:
         export ASEPRITE=$PWD/build/bin/aseprite
         cd tests
         $XVFB bash run-tests.sh
-    - name: Upload to Release Action
-      uses: Shopify/upload-to-release@v1.0.1
-      with:
-        name: aseprite
-        path: $ASEPRITE/aseprite
-        content-type: application/octet-stream
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
-    name: Publish for ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: aseprite
-            asset_name: aseprite-linux-amd64
-
-    steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --release --locked
     - name: Upload binaries to release
       uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: target/release/${{ matrix.artifact_name }}
+        file: $ASEPRITE
+        # /${{ matrix.artifact_name }}
         asset_name: ${{ matrix.asset_name }}
         tag: ${{ github.ref }}
