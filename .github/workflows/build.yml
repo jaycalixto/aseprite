@@ -54,8 +54,8 @@ jobs:
       shell: bash
       run: |
         mkdir -p $HOME/deps/skia/
-        wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Linux-Release-x86-libc++.zip
-        unzip -d $HOME/deps/skia/ Skia-Linux-Release-x86-libc++.zip 
+        wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Linux-Release-x64-libc++.zip
+        unzip -d $HOME/deps/skia/ Skia-Linux-Release-x64-libc++.zip
         if [[ "${{ runner.os }}" == "Windows" ]] ; then
           export enable_ccache=off
         else
