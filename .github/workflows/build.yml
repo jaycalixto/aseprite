@@ -80,10 +80,14 @@ jobs:
         export ASEPRITE=$PWD/build/bin/aseprite
         cd tests
         $XVFB bash run-tests.sh
+    - name: Compress binnaries
+      shell: bash
+      run: |
+        tar cfz release${{ github.run_number }}.tgz /home/runner/work/aseprite/aseprite/build/bin/*
     - name: Upload binaries to release
       uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: /home/runner/work/aseprite/aseprite/build/bin/aseprite
+        file: release${{ github.run_number }}.tgz
         asset_name: ${{ matrix.asset_name }}
         tag: v${{ github.run_number }}
