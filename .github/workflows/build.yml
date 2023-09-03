@@ -57,6 +57,8 @@ jobs:
           -DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
           -DCMAKE_EXE_LINKER_FLAGS:STRING=-stdlib=libc++ \
           -DLAF_BACKEND=skia \
+          -DLAF_WITH_EXAMPLES=OFF \
+          -DLAF_WITH_TESTS=OFF \
           -DSKIA_DIR=$HOME/deps/skia \
           -DSKIA_LIBRARY_DIR=$HOME/deps/skia/out/Release-x64 \
           -DSKIA_LIBRARY=$HOME/deps/skia/out/Release-x64/libskia.a \
