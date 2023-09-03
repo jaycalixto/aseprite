@@ -47,6 +47,8 @@ jobs:
         else
           export enable_ccache=on
         fi
+        export CC=clang
+        export CXX=clang++
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
           -DCMAKE_CXX_FLAGS:STRING=-stdlib=libc++ \
