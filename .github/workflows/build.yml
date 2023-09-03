@@ -120,5 +120,5 @@ jobs:
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: release${{ github.run_number }}.tgz
-        asset_name: ${{ matrix.asset_name }}
+        asset_name: release${{ github.run_number }}.tgz
         tag: v${{ github.run_number }}
