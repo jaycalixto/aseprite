@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -125,8 +125,26 @@ Grid::Info Grid::getChildInfo(Widget* child)
 
 void Grid::setStyle(Style* style)
 {
+  ASSERT(style);
+  if (!style)
+    style = Theme::getDefaultStyle();
   Widget::setStyle(style);
   setGap(style->gap());
+}
+
+void Grid::setColumns(int columns)
+{
+  if (columns == m_colstrip.size())
+    return;
+
+  int oldSize = m_colstrip.size();
+  m_colstrip.resize(columns);
+  for (int row=0; row<m_rowstrip.size(); ++row) {
+    m_cells[row].resize(m_colstrip.size());
+    for (int col=oldSize; col<(int)m_cells[row].size(); ++col) {
+      m_cells[row][col] = new Cell;
+    }
+  }
 }
 
 void Grid::setGap(const gfx::Size& gap)

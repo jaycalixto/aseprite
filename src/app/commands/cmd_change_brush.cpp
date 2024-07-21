@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (c) 2023  Igara Studio S.A.
+// Copyright (c) 2023-2024  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -15,6 +15,7 @@
 #include "app/context.h"
 #include "app/i18n/strings.h"
 #include "app/pref/preferences.h"
+#include "app/tilemap_mode.h"
 #include "app/tools/active_tool.h"
 #include "app/tools/ink.h"
 #include "app/tools/tool.h"
@@ -26,7 +27,6 @@
 #include "doc/image_ref.h"
 #include "doc/primitives.h"
 #include "doc/tile.h"
-#include "fmt/format.h"
 
 #include <algorithm>
 #include <string>
@@ -95,6 +95,7 @@ void ChangeBrushCommand::onExecute(Context* context)
   auto app = App::instance();
   auto atm = app->activeToolManager();
   auto& pref = Preferences::instance();
+  auto colorBar = ColorBar::instance();
   auto contextBar = (app->mainWindow() ? app->mainWindow()->getContextBar():
                                          nullptr);
   const BrushRef brush = (contextBar ? contextBar->activeBrush():
@@ -154,9 +155,7 @@ void ChangeBrushCommand::onExecute(Context* context)
 
         // Create a copy of the brush (to avoid modifying the original
         // brush from the AppBrushes stock)
-        BrushRef newBrush = std::make_shared<Brush>(*brush);
-        newBrush->setImage(newImg.get(),
-                           newMsk.get());
+        BrushRef newBrush = brush->cloneWithExistingImages(newImg, newMsk);
         contextBar->setActiveBrush(newBrush);
       }
       else {
@@ -185,7 +184,14 @@ void ChangeBrushCommand::onExecute(Context* context)
 
     case FlipX:
     case FlipY:
-      if (isImageBrush) {
+      if (colorBar && colorBar->tilemapMode() == TilemapMode::Tiles) {
+        doc::tile_t t = pref.colorBar.fgTile();
+        switch (m_change) {
+          case FlipX: pref.colorBar.fgTile(t ^ tile_f_xflip); break;
+          case FlipY: pref.colorBar.fgTile(t ^ tile_f_yflip); break;
+        }
+      }
+      else if (isImageBrush) {
         ImageRef newImg(Image::createCopy(brush->image()));
         ImageRef newMsk(Image::createCopy(brush->maskBitmap()));
         const gfx::Rect bounds = newImg->bounds();
@@ -201,9 +207,7 @@ void ChangeBrushCommand::onExecute(Context* context)
             break;
         }
 
-        BrushRef newBrush = std::make_shared<Brush>(*brush);
-        newBrush->setImage(newImg.get(),
-                           newMsk.get());
+        BrushRef newBrush = brush->cloneWithExistingImages(newImg, newMsk);
         contextBar->setActiveBrush(newBrush);
       }
       else {
@@ -221,7 +225,25 @@ void ChangeBrushCommand::onExecute(Context* context)
 
     case FlipD:
     case Rotate90CW:
-      if (isImageBrush) {
+      if (colorBar && colorBar->tilemapMode() == TilemapMode::Tiles) {
+        doc::tile_t t = pref.colorBar.fgTile();
+        switch (m_change) {
+          case FlipD:
+            pref.colorBar.fgTile(t ^ tile_f_dflip);
+            break;
+          case Rotate90CW: {
+            doc::tile_flags ti = doc::tile_geti(t);
+            doc::tile_flags tf = doc::tile_getf(t);
+            tf =
+              (tf & doc::tile_f_xflip ? doc::tile_f_yflip: 0) |
+              (tf & doc::tile_f_yflip ? 0: doc::tile_f_xflip) |
+              (tf & doc::tile_f_dflip ? 0: doc::tile_f_dflip);
+            pref.colorBar.fgTile(doc::tile(ti, tf));
+            break;
+          }
+        }
+      }
+      else if (isImageBrush) {
         const gfx::Rect origBounds = brush->bounds();
         const int m = std::max(origBounds.w, origBounds.h);
         const gfx::Rect maxBounds(0, 0, m, m);
@@ -270,10 +292,7 @@ void ChangeBrushCommand::onExecute(Context* context)
 
         ImageRef newImg2(crop_image(newImg.get(), cropBounds, bg));
         ImageRef newMsk2(crop_image(newMsk.get(), cropBounds, bg));
-
-        BrushRef newBrush = std::make_shared<Brush>(*brush);
-        newBrush->setImage(newImg.get(),
-                           newMsk.get());
+        BrushRef newBrush = brush->cloneWithExistingImages(newImg2, newMsk2);
         contextBar->setActiveBrush(newBrush);
       }
       break;
@@ -308,10 +327,10 @@ std::string ChangeBrushCommand::onGetFriendlyName() const
     case FlipD: change = Strings::commands_ChangeBrush_FlipD(); break;
     case Rotate90CW: change = Strings::commands_ChangeBrush_Rotate90CW(); break;
     case CustomBrush:
-      change = fmt::format(Strings::commands_ChangeBrush_CustomBrush(), m_slot);
+      change = Strings::commands_ChangeBrush_CustomBrush(m_slot);
       break;
   }
-  return fmt::format(getBaseFriendlyName(), change);
+  return Strings::commands_ChangeBrush(change);
 }
 
 Command* CommandFactory::createChangeBrushCommand()

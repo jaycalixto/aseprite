@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -54,6 +54,7 @@
 #include "app/ui/toolbar.h"
 #include "app/ui_context.h"
 #include "app/util/layer_utils.h"
+#include "app/util/tile_flags_utils.h"
 #include "base/chrono.h"
 #include "base/convert_to.h"
 #include "doc/doc.h"
@@ -753,8 +754,11 @@ void Editor::drawOneSpriteUnclippedRect(ui::Graphics* g, const gfx::Rect& sprite
   }
 
   if (rendered && rendered->nativeHandle()) {
+    os::Paint p;
     if (newEngine) {
       os::Sampling sampling;
+      p.srcEdges(os::Paint::SrcEdges::Fast); // Enable mipmaps if possible
+
       if (m_proj.scaleX() < 1.0) {
         switch (pref.editor.downsampling()) {
           case gen::Downsampling::NEAREST:
@@ -774,7 +778,6 @@ void Editor::drawOneSpriteUnclippedRect(ui::Graphics* g, const gfx::Rect& sprite
         }
       }
 
-      os::Paint p;
       if (renderProperties.requiresRgbaBackbuffer)
         p.blendMode(os::BlendMode::SrcOver);
       else
@@ -787,7 +790,11 @@ void Editor::drawOneSpriteUnclippedRect(ui::Graphics* g, const gfx::Rect& sprite
                      &p);
     }
     else {
-      g->blit(rendered.get(), 0, 0, dest.x, dest.y, dest.w, dest.h);
+      g->drawSurface(rendered.get(),
+                     gfx::Rect(0, 0, dest.w, dest.h),
+                     gfx::Rect(dest.x, dest.y, dest.w, dest.h),
+                     os::Sampling(os::Sampling::Filter::Nearest),
+                     &p);
     }
   }
 
@@ -1196,7 +1203,8 @@ void Editor::drawTileNumbers(ui::Graphics* g, const Cel* cel)
 
   const doc::Grid grid = getSite().grid();
   const gfx::Size tileSize = editorToScreen(grid.tileToCanvas(gfx::Rect(0, 0, 1, 1))).size();
-  if (tileSize.h > g->font()->height()) {
+  const int th = g->font()->height();
+  if (tileSize.h > th) {
     const gfx::Point offset =
       gfx::Point(tileSize.w/2,
                  tileSize.h/2 - g->font()->height()/2)
@@ -1211,13 +1219,28 @@ void Editor::drawTileNumbers(ui::Graphics* g, const Cel* cel)
       for (int x=0; x<image->width(); ++x) {
         doc::tile_t t = image->getPixel(x, y);
         if (t != doc::notile) {
+          const doc::tile_index ti = doc::tile_geti(t);
+          const doc::tile_index tf = doc::tile_getf(t);
+
           gfx::Point pt = editorToScreen(grid.tileToCanvas(gfx::Point(x, y)));
           pt -= bounds().origin();
           pt += offset;
 
-          text = fmt::format("{}", int(t & doc::tile_i_mask) + ti_offset);
-          pt.x -= g->measureUIText(text).w/2;
-          g->drawText(text, fgColor, color, pt);
+          text = fmt::format("{}", ti + ti_offset);
+
+          gfx::Point pt2(pt);
+          pt2.x -= g->measureUIText(text).w/2;
+          g->drawText(text, fgColor, color, pt2);
+
+          if (tf && tileSize.h > 2*th) {
+            text.clear();
+            build_tile_flags_string(tf, text);
+
+            const gfx::Size tsize = g->measureUIText(text);
+            pt.x -= tsize.w/2;
+            pt.y += tsize.h;
+            g->drawText(text, fgColor, color, pt);
+          }
         }
       }
     }
@@ -1880,6 +1903,21 @@ void Editor::cancelSelections()
   clearSlicesSelection();
 }
 
+void Editor::showUnhandledException(const std::exception& ex,
+                                    const ui::Message* msg)
+{
+  EditorState* state = getState().get();
+
+  Console console;
+  Console::showException(ex);
+  console.printf(
+    "\nInternal details:\n"
+    "- Message type: %d\n"
+    "- Editor state: %s\n",
+    (msg ? msg->type(): -1),
+    (state ? typeid(*state).name(): "None"));
+}
+
 //////////////////////////////////////////////////////////////////////
 // Message handler for the editor
 
@@ -2243,10 +2281,10 @@ void Editor::onPaint(ui::PaintEvent& ev)
       if (Preferences::instance().perf.showRenderTime()) {
         View* view = View::getView(this);
         gfx::Rect vp = view->viewportBounds();
-        char buf[128];
-        sprintf(buf, "%c %.4gs",
-                Preferences::instance().experimental.newRenderEngine() ? 'N': 'O',
-                renderElapsed);
+        std::string buf =
+          fmt::format("{:c} {:.4g}s",
+                      Preferences::instance().experimental.newRenderEngine() ? 'N': 'O',
+                      renderElapsed);
         g->drawText(
           buf,
           gfx::rgba(255, 255, 255, 255),
@@ -2375,6 +2413,9 @@ void Editor::onBeforeRemoveLayer(DocEvent& ev)
   Layer* layerToSelect = candidate_if_layer_is_deleted(layer(), ev.layer());
   if (layer() != layerToSelect)
     setLayer(layerToSelect);
+
+  if (m_state)
+    m_state->onBeforeRemoveLayer(this);
 }
 
 void Editor::onBeforeRemoveCel(DocEvent& ev)
@@ -2401,6 +2442,12 @@ void Editor::onRemoveSlice(DocEvent& ev)
       m_selectedSlices.contains(ev.slice()->id())) {
     m_selectedSlices.erase(ev.slice()->id());
   }
+}
+
+void Editor::onBeforeLayerVisibilityChange(DocEvent& ev, bool newState)
+{
+  if (m_state)
+    m_state->onBeforeLayerVisibilityChange(this, ev.layer(), newState);
 }
 
 void Editor::setCursor(const gfx::Point& mouseDisplayPos)

@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -73,6 +73,14 @@ namespace doc {
     static Sprite* MakeStdSprite(const ImageSpec& spec,
                                  const int ncolors = 256,
                                  const ImageBufferPtr& imageBuf = ImageBufferPtr());
+    // Creates a new sprite with one tilemap layer and one cel
+    // with a tilemap's image of the size specified by tilemapspec and the
+    // given tileset.
+    static Sprite* MakeStdTilemapSpriteWithTileset(const ImageSpec& spec,
+                                  const ImageSpec& tilemapspec,
+                                  const Tileset& tileset,
+                                  const int ncolors = 256,
+                                  const ImageBufferPtr& imageBuf = ImageBufferPtr());
 
     ////////////////////////////////////////
     // Main properties
@@ -85,6 +93,7 @@ namespace doc {
     PixelFormat pixelFormat() const { return (PixelFormat)m_spec.colorMode(); }
     ColorMode colorMode() const { return m_spec.colorMode(); }
     const PixelRatio& pixelRatio() const { return m_pixelRatio; }
+    bool hasPixelRatio() const;
     gfx::Size size() const { return m_spec.size(); }
     gfx::Rect bounds() const { return m_spec.bounds(); }
     int width() const { return m_spec.width(); }
@@ -97,7 +106,7 @@ namespace doc {
     void setColorSpace(const gfx::ColorSpaceRef& colorSpace);
 
     // This method is only required/used for the template functions app::script::UserData_set_text/color.
-    const Sprite* sprite() const { return this; }
+    Sprite* sprite() const { return const_cast<Sprite*>(this); }
 
     // Returns true if the sprite has a background layer and it's visible
     bool isOpaque() const;
@@ -210,6 +219,7 @@ namespace doc {
     LayerList allVisibleReferenceLayers() const;
     LayerList allBrowsableLayers() const;
     LayerList allTilemaps() const;
+    std::string visibleLayerHierarchyAsString() const;
 
     CelsRange cels() const;
     CelsRange cels(frame_t frame) const;

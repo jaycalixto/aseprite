@@ -73,8 +73,7 @@ namespace doc {
       ASSERT(i >= 0);
       if (i >= 0 && i < size())
         return m_colors[i];
-      else
-        return 0;
+      return 0;
     }
     color_t getEntry(int i) const {
       return entry(i);
@@ -85,6 +84,9 @@ namespace doc {
     void copyColorsTo(Palette* dst) const;
 
     int countDiff(const Palette* other, int* from, int* to) const;
+
+    void addNonRepeatedColors(const Palette* palette,
+                              const int max = 256);
 
     bool operator==(const Palette& other) const {
       return (countDiff(&other, nullptr, nullptr) == 0);

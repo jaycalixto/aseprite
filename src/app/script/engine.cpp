@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -32,6 +32,7 @@
 #include "doc/anidir.h"
 #include "doc/color_mode.h"
 #include "filters/target.h"
+#include "fmt/format.h"
 #include "ui/base.h"
 #include "ui/cursor_type.h"
 #include "ui/mouse_button.h"
@@ -40,6 +41,21 @@
 #include <sstream>
 #include <stack>
 #include <string>
+
+// We use our own fopen() that supports Unicode filename on Windows
+// extern "C"
+FILE* lua_user_fopen(const char* fname,
+                     const char* mode)
+{
+  return base::open_file_raw(fname, mode);
+}
+
+FILE* lua_user_freopen(const char* fname,
+                       const char* mode,
+                       FILE* stream)
+{
+  return base::reopen_file_raw(fname, mode, stream);
+}
 
 namespace app {
 namespace script {
@@ -128,24 +144,27 @@ int dofile(lua_State *L)
   return dofilecont(L, 0, 0);
 }
 
+lua_CFunction orig_loadfile = nullptr;
+int loadfile(lua_State *L)
+{
+  ASSERT(orig_loadfile);
+  if (!orig_loadfile)
+    return luaL_error(L, "no original loadfile()?");
+
+  // fname is not optional if we are running in GUI mode as it blocks
+  // the program.
+  if (auto app = App::instance();
+      app && app->isGui() && !lua_isstring(L, 1)) {
+    return luaL_error(L, "loadfile() for stdin cannot be used running in GUI mode");
+  }
+
+  return orig_loadfile(L);
+}
+
 int os_clock(lua_State* L)
 {
   lua_pushnumber(L, luaClock.elapsed());
   return 1;
-}
-
-int unsupported(lua_State* L)
-{
-  // debug.getinfo(1, "n").name
-  lua_getglobal(L, "debug");
-  lua_getfield(L, -1, "getinfo");
-  lua_remove(L, -2);
-  lua_pushinteger(L, 1);
-  lua_pushstring(L, "n");
-  lua_call(L, 2, 1);
-  lua_getfield(L, -1, "name");
-  return luaL_error(L, "unsupported function '%s'",
-                    lua_tostring(L, -1));
 }
 
 } // anonymous namespace
@@ -153,6 +172,7 @@ int unsupported(lua_State* L)
 void register_app_object(lua_State* L);
 void register_app_pixel_color_object(lua_State* L);
 void register_app_fs_object(lua_State* L);
+void register_app_os_object(lua_State* L);
 void register_app_command_object(lua_State* L);
 void register_app_preferences_object(lua_State* L);
 void register_json_object(lua_State* L);
@@ -206,13 +226,6 @@ void register_websocket_class(lua_State* L);
 
 void set_app_params(lua_State* L, const Params& params);
 
-// We use our own fopen() that supports Unicode filename on Windows
-extern "C" FILE* lua_user_fopen(const char* fname,
-                                const char* mode)
-{
-  return base::open_file_raw(fname, mode);
-}
-
 Engine::Engine()
   : L(luaL_newstate())
   , m_delegate(nullptr)
@@ -225,38 +238,23 @@ Engine::Engine()
   // Standard Lua libraries
   luaL_openlibs(L);
 
-  // Overwrite Lua functions
+  // Secure Lua functions
+  overwrite_unsecure_functions(L);
+
+  // Overwrite Lua functions with custom implementations
   lua_register(L, "print", print);
   lua_register(L, "dofile", dofile);
 
-  lua_getglobal(L, "os");
-  for (const char* name : { "remove", "rename", "exit", "tmpname" }) {
-    lua_pushcfunction(L, unsupported);
-    lua_setfield(L, -2, name);
+  if (!orig_loadfile) {
+    lua_getglobal(L, "loadfile");
+    orig_loadfile = lua_tocfunction(L, -1);
+    lua_pop(L, 1);
   }
+  lua_register(L, "loadfile", loadfile);
+
+  lua_getglobal(L, "os");
   lua_pushcfunction(L, os_clock);
   lua_setfield(L, -2, "clock");
-  lua_pop(L, 1);
-
-  // Wrap io.open()
-  lua_getglobal(L, "io");
-  lua_getfield(L, -1, "open");
-  lua_pushcclosure(L, secure_io_open, 1);
-  lua_setfield(L, -2, "open");
-  lua_pop(L, 1);
-
-  // Wrap os.execute()
-  lua_getglobal(L, "os");
-  lua_getfield(L, -1, "execute");
-  lua_pushcclosure(L, secure_os_execute, 1);
-  lua_setfield(L, -2, "execute");
-  lua_pop(L, 1);
-
-  // Wrap package.loadlib()
-  lua_getglobal(L, "package");
-  lua_getfield(L, -1, "loadlib");
-  lua_pushcclosure(L, secure_package_loadlib, 1);
-  lua_setfield(L, -2, "loadlib");
   lua_pop(L, 1);
 
   // Enhance require() function for plugins
@@ -269,6 +267,7 @@ Engine::Engine()
   register_app_object(L);
   register_app_pixel_color_object(L);
   register_app_fs_object(L);
+  register_app_os_object(L);
   register_app_command_object(L);
   register_app_preferences_object(L);
   register_json_object(L);
@@ -474,6 +473,9 @@ Engine::Engine()
   setfield_integer(L, "LEFT",   ui::LEFT);
   setfield_integer(L, "CENTER", ui::CENTER);
   setfield_integer(L, "RIGHT",  ui::RIGHT);
+  setfield_integer(L, "TOP",    ui::TOP);
+  setfield_integer(L, "BOTTOM", ui::BOTTOM);
+
   lua_pop(L, 1);
 
   // Register classes/prototypes
@@ -544,6 +546,24 @@ void Engine::destroy()
   L = nullptr;
 }
 
+void Engine::notifyRunningGui()
+{
+  // Mark stdin file handle as closed so the following statements
+  // don't hang the program:
+  // - io.lines()
+  // - io.read('a')
+  // - io.stdin:read('a')
+  lua_getglobal(L, "io");
+  lua_getfield(L, -1, "stdin");
+
+  auto p = ((luaL_Stream*)luaL_checkudata(L, -1, LUA_FILEHANDLE));
+  ASSERT(p);
+  p->f = nullptr;
+  p->closef = nullptr;
+
+  lua_pop(L, 2);
+}
+
 void Engine::printLastResult()
 {
   m_printLastResult = true;
@@ -581,7 +601,7 @@ bool Engine::evalCode(const std::string& code,
     lua_pop(L, 1);
   }
   catch (const std::exception& ex) {
-    onConsoleError(ex.what());
+    handleException(ex);
     ok = false;
     m_returnCode = -1;
   }
@@ -589,6 +609,18 @@ bool Engine::evalCode(const std::string& code,
   // Collect script garbage.
   lua_gc(L, LUA_GCCOLLECT);
   return ok;
+}
+
+void Engine::handleException(const std::exception& ex)
+{
+  luaL_where(L, 1);
+  const char* where = lua_tostring(L, -1);
+  luaL_traceback(L, L, ex.what(), 1);
+  const char* traceback = lua_tostring(L, -1);
+  std::string msg(fmt::format("{}{}", where, traceback));
+  lua_pop(L, 2);
+
+  onConsoleError(msg.c_str());
 }
 
 bool Engine::evalFile(const std::string& filename,

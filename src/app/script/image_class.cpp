@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2015-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -16,6 +16,7 @@
 #include "app/context.h"
 #include "app/doc.h"
 #include "app/file/file.h"
+#include "app/modules/palettes.h"
 #include "app/script/blend_mode.h"
 #include "app/script/docobj.h"
 #include "app/script/engine.h"
@@ -29,6 +30,7 @@
 #include "doc/algorithm/flip_image.h"
 #include "doc/algorithm/flip_type.h"
 #include "doc/algorithm/shrink_bounds.h"
+#include "doc/blend_image.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/image_ref.h"
@@ -51,6 +53,7 @@ struct ImageObj {
   doc::ObjectId imageId = 0;
   doc::ObjectId celId = 0;
   doc::ObjectId tilesetId = 0;
+  doc::tile_index ti = 0;
   ImageObj(doc::Image* image)
     : imageId(image->id()) {
   }
@@ -58,9 +61,12 @@ struct ImageObj {
     : imageId(cel->image()->id())
     , celId(cel->id()) {
   }
-  ImageObj(doc::Tileset* tileset, doc::Image* image)
+  ImageObj(doc::Tileset* tileset,
+           doc::tile_index ti,
+           doc::Image* image)
     : imageId(image->id())
-    , tilesetId(tileset->id()) {
+    , tilesetId(tileset->id())
+    , ti(ti) {
   }
   ImageObj(const ImageObj&) = delete;
   ImageObj& operator=(const ImageObj&) = delete;
@@ -82,6 +88,13 @@ struct ImageObj {
   doc::Cel* cel(lua_State* L) {
     if (celId)
       return check_docobj(L, doc::get<doc::Cel>(celId));
+    else
+      return nullptr;
+  }
+
+  doc::Tileset* tileset(lua_State* L) {
+    if (tilesetId)
+      return check_docobj(L, doc::get<doc::Tileset>(tilesetId));
     else
       return nullptr;
   }
@@ -257,6 +270,14 @@ int Image_drawPixel(lua_State* L)
   else
     color = convert_args_into_pixel_color(L, 4, img->pixelFormat());
   doc::put_pixel(img, x, y, color);
+
+  // Rehash tileset
+  if (obj->tilesetId) {
+    if (doc::Tileset* ts = obj->tileset(L)) {
+      ts->incrementVersion();
+      ts->notifyTileContentChange(obj->ti);
+    }
+  }
   return 0;
 }
 
@@ -292,29 +313,35 @@ int Image_drawImage(lua_State* L)
   Image* dst = obj->image(L);
   const Image* src = sprite->image(L);
 
-  // If the destination image is not related to a sprite, we just draw
-  // the source image without undo information.
-  if (obj->cel(L) == nullptr) {
-    doc::blend_image(dst, src,
-                     pos.x, pos.y,
+  if (auto cel = obj->cel(L)) {
+    gfx::Rect bounds(src->size());
+
+    // Create the ImageBuffer only when it doesn't exist so we can
+    // cache the allocated buffer.
+    if (!buf)
+      buf = std::make_shared<doc::ImageBuffer>();
+
+    ImageRef tmp_src(doc::crop_image(dst, gfx::Rect(pos, src->size()), 0, buf));
+    doc::blend_image(tmp_src.get(), src,
+                     gfx::Clip(src->size()),
+                     cel->sprite()->palette(0),
                      opacity, blendMode);
-  }
-  else {
-    gfx::Rect bounds(0, 0, src->size().w, src->size().h);
-    buf.reset(new doc::ImageBuffer);
-    ImageRef tmp_src(
-      doc::crop_image(dst,
-                      gfx::Rect(pos.x, pos.y, src->size().w, src->size().h),
-                      0, buf));
-    doc::blend_image(tmp_src.get(), src, 0, 0, opacity, blendMode);
     // TODO Use something similar to doc::algorithm::shrink_bounds2()
     //      but we need something that does the render and compares
     //      the minimal modified area.
-    Tx tx;
+    Tx tx(cel->sprite());
     tx(new cmd::CopyRegion(
          dst, tmp_src.get(), gfx::Region(bounds),
          gfx::Point(pos.x + bounds.x, pos.y + bounds.y)));
     tx.commit();
+  }
+  // If the destination image is not related to a sprite, we just draw
+  // the source image without undo information.
+  else {
+    doc::blend_image(dst, src,
+                     gfx::Clip(pos, src->bounds()),
+                     get_current_palette(),
+                     opacity, blendMode);
   }
   return 0;
 }
@@ -330,13 +357,8 @@ int Image_drawSprite(lua_State* L)
   ASSERT(dst);
   ASSERT(sprite);
 
-  // If the destination image is not related to a sprite, we just draw
-  // the source image without undo information.
-  if (obj->cel(L) == nullptr) {
-    render_sprite(dst, sprite, frame, pos.x, pos.y);
-  }
-  else {
-    Tx tx;
+  if (auto cel = obj->cel(L)) {
+    Tx tx(cel->sprite());
 
     ImageRef tmp(Image::createCopy(dst));
     render_sprite(tmp.get(), sprite, frame, pos.x, pos.y);
@@ -349,6 +371,11 @@ int Image_drawSprite(lua_State* L)
     }
 
     tx.commit();
+  }
+  // If the destination image is not related to a sprite, we just draw
+  // the source image without undo information.
+  else {
+    render_sprite(dst, sprite, frame, pos.x, pos.y);
   }
   return 0;
 }
@@ -447,10 +474,29 @@ int Image_saveAs(lua_State* L)
     return luaL_error(L, "script doesn't have access to write file %s",
                       absFn.c_str());
 
-  std::unique_ptr<Sprite> sprite(Sprite::MakeStdSprite(img->spec(), 256));
-
+  std::unique_ptr<Sprite> sprite;
   std::vector<ImageRef> oneImage;
-  sprite->getImages(oneImage);
+  // If we are saving a tilemap's image, we create a sprite with a tilemap layer
+  // and the cel's layer tileset.
+  // TODO: Consider the possibility to add a "tileset" parameter to
+  // Image:saveAs{}.
+  if (cel && cel->layer()->isTilemap()) {
+    auto tileset = static_cast<LayerTilemap*>(cel->layer())->tileset();
+    auto spec = cel->sprite()->spec();
+    // Use the correct final image size, not the sprite size.
+    spec.setSize(tileset->grid().tilemapSizeToCanvas(img->spec().size()));
+    sprite.reset(Sprite::MakeStdTilemapSpriteWithTileset(spec,
+                                                         img->spec(),
+                                                         *tileset,
+                                                         256));
+    sprite->getTilemapsByTileset(sprite->tilesets()->get(0), oneImage);
+  }
+  // Create a standard sprite otherwise
+  else {
+    sprite.reset(Sprite::MakeStdSprite(img->spec(), 256));
+    sprite->getImages(oneImage);
+  }
+
   ASSERT(oneImage.size() == 1);
   if (!oneImage.empty())
     copy_image(oneImage.front().get(), img);
@@ -533,7 +579,7 @@ int Image_resize(lua_State* L)
   // If the destination image is not related to a sprite, we just draw
   // the source image without undo information.
   if (cel) {
-    Tx tx;
+    Tx tx(cel->sprite());
     resize_cel_image(tx, cel, scale, method,
                      gfx::PointF(pivot));
     tx.commit();
@@ -589,13 +635,13 @@ int Image_flip(lua_State* L)
   if (lua_isinteger(L, 2))
     flipType = (doc::algorithm::FlipType)lua_tointeger(L, 2);
 
-  if (obj->cel(L) == nullptr) {
-    doc::algorithm::flip_image(img, img->bounds(), flipType);
-  }
-  else {
-    Tx tx;
+  if (auto cel = obj->cel(L)) {
+    Tx tx(cel->sprite());
     tx(new cmd::FlipImage(img, img->bounds(), flipType));
     tx.commit();
+  }
+  else {
+    doc::algorithm::flip_image(img, img->bounds(), flipType);
   }
   return 0;
 }
@@ -753,9 +799,13 @@ void push_image(lua_State* L, doc::Image* image)
   push_new<ImageObj>(L, image);
 }
 
-void push_tileset_image(lua_State* L, doc::Tileset* tileset, doc::Image* image)
+void push_tileset_image(lua_State* L, doc::Tileset* tileset, doc::tile_index ti)
 {
-  push_new<ImageObj>(L, tileset, image);
+  doc::ImageRef image = tileset->get(ti);
+  if (image)
+    push_new<ImageObj>(L, tileset, ti, image.get());
+  else
+    lua_pushnil(L);
 }
 
 doc::Image* may_get_image_from_arg(lua_State* L, int index)
@@ -775,6 +825,11 @@ doc::Image* get_image_from_arg(lua_State* L, int index)
 doc::Cel* get_image_cel_from_arg(lua_State* L, int index)
 {
   return get_obj<ImageObj>(L, index)->cel(L);
+}
+
+doc::Tileset* get_image_tileset_from_arg(lua_State* L, int index)
+{
+  return get_obj<ImageObj>(L, index)->tileset(L);
 }
 
 } // namespace script

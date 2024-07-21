@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019-2023  Igara Studio S.A.
+// Copyright (C) 2019-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -74,6 +74,8 @@ namespace app {
                    const Image* moveThis,
                    const Mask* mask,
                    const char* operationName);
+
+    const Site& site() { return m_site; }
 
     HandleType handle() const { return m_handle; }
     bool canHandleFrameChange() const { return m_canHandleFrameChange; }
@@ -189,12 +191,6 @@ namespace app {
     // avoiding RotSprite on each mouse movement.
     bool m_fastMode;
     bool m_needsRotSpriteRedraw;
-
-    // Flag to disable the fine control when the transformation doesn't
-    // include rotation or skew (so just translating doesn't allow fine
-    // control until we rotate or skew, this might change in the future
-    // if we add a new anti-aliasing rotation algorithm)
-    bool m_fineModificationApplied;
 
     // Commands used in the interaction with the transformed pixels.
     // This is used to re-create the whole interaction on each

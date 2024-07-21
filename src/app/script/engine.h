@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -97,6 +97,9 @@ namespace app {
       m_delegate = delegate;
     }
 
+    // Called if the GUI is going to be started.
+    void notifyRunningGui();
+
     void printLastResult();
     bool evalCode(const std::string& code,
                   const std::string& filename = std::string());
@@ -104,6 +107,8 @@ namespace app {
                   const Params& params = Params());
     bool evalUserFile(const std::string& filename,
                       const Params& params = Params());
+
+    void handleException(const std::exception& ex);
 
     void consolePrint(const char* text) {
       onConsolePrint(text);
@@ -176,7 +181,7 @@ namespace app {
   void push_tile(lua_State* L, const doc::Tileset* tileset, doc::tile_index ti);
   void push_tile_properties(lua_State* L, const doc::Tileset* tileset, doc::tile_index ti, const std::string& extID);
   void push_tileset(lua_State* L, const doc::Tileset* tileset);
-  void push_tileset_image(lua_State* L, doc::Tileset* tileset, doc::Image* image);
+  void push_tileset_image(lua_State* L, doc::Tileset* tileset, doc::tile_index ti);
   void push_tilesets(lua_State* L, doc::Tilesets* tilesets);
   void push_tool(lua_State* L, app::tools::Tool* tool);
   void push_version(lua_State* L, const base::Version& ver);
@@ -195,6 +200,7 @@ namespace app {
   doc::Image* may_get_image_from_arg(lua_State* L, int index);
   doc::Image* get_image_from_arg(lua_State* L, int index);
   doc::Cel* get_image_cel_from_arg(lua_State* L, int index);
+  doc::Tileset* get_image_tileset_from_arg(lua_State* L, int index);
   doc::frame_t get_frame_number_from_arg(lua_State* L, int index);
   const doc::Mask* get_mask_from_arg(lua_State* L, int index);
   app::tools::Tool* get_tool_from_arg(lua_State* L, int index);

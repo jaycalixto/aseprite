@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019-2022  Igara Studio S.A.
+// Copyright (C) 2019-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -28,7 +28,6 @@
 #include "base/fs.h"
 #include "base/paths.h"
 #include "base/string.h"
-#include "fmt/format.h"
 #include "ui/ui.h"
 
 #include "new_folder_window.xml.h"
@@ -411,13 +410,9 @@ bool FileSelector::show(
   fs->refresh();
 
   // We have to find where the user should begin to browse files
-  std::string start_folder_path;
-  if (initialPath.empty()) {
-    start_folder_path = get_initial_path_to_select_filename(initialPath);
-  }
-  else {
-    start_folder_path = base::get_file_path(initialPath);
-  }
+  std::string start_folder_path =
+    base::get_file_path(
+      get_initial_path_to_select_filename(initialPath));
 
   IFileItem* start_folder = fs->getFileItemFromPath(start_folder_path);
   if (!start_folder) {
@@ -642,9 +637,8 @@ again:
         const char* invalid_chars = ": * ? \" < > |";
 
         ui::Alert::show(
-            fmt::format(
-                Strings::alerts_invalid_chars_in_filename(),
-                invalid_chars));
+          Strings::alerts_invalid_chars_in_filename(
+            invalid_chars));
 
         // show the window again
         setVisible(true);
@@ -663,9 +657,7 @@ again:
 
     if (m_type == FileSelectorType::Save && base::is_file(buf)) {
       int ret = Alert::show(
-        fmt::format(
-          Strings::alerts_overwrite_existent_file(),
-          base::get_file_name(buf)));
+        Strings::alerts_overwrite_existent_file(base::get_file_name(buf)));
       if (ret == 2) {
         setVisible(true);
         goto again;
@@ -700,6 +692,12 @@ again:
   Preferences::instance().fileSelector.zoom(m_fileList->zoom());
 
   return (!output.empty());
+}
+
+void FileSelector::onOpen(Event& ev)
+{
+  app::gen::FileSelector::onOpen(ev);
+  onRefreshFolder();
 }
 
 bool FileSelector::onProcessMessage(ui::Message* msg)

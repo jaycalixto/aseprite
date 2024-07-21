@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018-2023  Igara Studio S.A.
+// Copyright (C) 2018-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -355,7 +355,7 @@ bool AseFormat::onSave(FileOp* fop)
 
   bool require_new_palette_chunk = false;
   for (Palette* pal : sprite->getPalettes()) {
-    if (pal->size() != 256 || pal->hasAlpha()) {
+    if (pal->size() > 256 || pal->hasAlpha()) {
       require_new_palette_chunk = true;
       break;
     }
@@ -364,7 +364,7 @@ bool AseFormat::onSave(FileOp* fop)
   // Write frames
   int outputFrame = 0;
   dio::AsepriteExternalFiles ext_files;
-  for (frame_t frame : fop->roi().selectedFrames()) {
+  for (frame_t frame : fop->roi().framesSequence()) {
     // Prepare the frame header
     dio::AsepriteFrameHeader frame_header;
     ase_file_prepare_frame_header(f, &frame_header);
@@ -393,9 +393,12 @@ bool AseFormat::onSave(FileOp* fop)
         ase_file_write_palette_chunk(f, &frame_header,
                                      pal, palFrom, palTo);
       }
-
-      // Write color chunk for backward compatibility only
-      ase_file_write_color2_chunk(f, &frame_header, pal);
+      else {
+        // Use old color chunk only when the palette has 256 or less
+        // colors, and we don't need the alpha channel (as this chunk
+        // is smaller than the new palette chunk).
+        ase_file_write_color2_chunk(f, &frame_header, pal);
+      }
     }
 
     // Write extra chunks in the first frame
@@ -676,6 +679,7 @@ static void ase_file_write_color2_chunk(FILE* f, dio::AsepriteFrameHeader* frame
 
   // First packet
   fputc(0, f);                                   // skip 0 colors
+  ASSERT(pal->size() <= 256);                    // For >256 we use the palette chunk
   fputc(pal->size() == 256 ? 0: pal->size(), f); // number of colors
   for (c=0; c<pal->size(); c++) {
     color = pal->getEntry(c);
@@ -1045,9 +1049,9 @@ static void ase_file_write_cel_chunk(FILE* f, dio::AsepriteFrameHeader* frame_he
       fputw(image->height(), f);
       fputw(32, f);             // TODO use different bpp when possible
       fputl(tile_i_mask, f);
-      fputl(tile_f_flipx, f);
-      fputl(tile_f_flipy, f);
-      fputl(tile_f_90cw, f);
+      fputl(tile_f_xflip, f);
+      fputl(tile_f_yflip, f);
+      fputl(tile_f_dflip, f);
       ase_file_write_padding(f, 10);
 
       ImageScanlines scan(image);
@@ -1252,7 +1256,8 @@ static void ase_file_write_slice_chunk(FILE* f, dio::AsepriteFrameHeader* frame_
 {
   ChunkWriter chunk(f, frame_header, ASE_FILE_CHUNK_SLICE);
 
-  auto range = slice->range(fromFrame, toFrame);
+  frame_t firstFromFrame = slice->empty() ? fromFrame : slice->fromFrame();
+  auto range = slice->range(firstFromFrame, toFrame);
   ASSERT(!range.empty());
 
   int flags = 0;
@@ -1268,10 +1273,10 @@ static void ase_file_write_slice_chunk(FILE* f, dio::AsepriteFrameHeader* frame_
   fputl(0, f);                             // 4 bytes reserved
   ase_file_write_string(f, slice->name()); // slice name
 
-  frame_t frame = fromFrame;
+  frame_t frame = firstFromFrame;
   const SliceKey* oldKey = nullptr;
   for (auto key : range) {
-    if (frame == fromFrame || key != oldKey) {
+    if (frame == firstFromFrame || key != oldKey) {
       fputl(frame, f);
       fputl((int32_t)(key ? key->bounds().x: 0), f);
       fputl((int32_t)(key ? key->bounds().y: 0), f);
@@ -1360,7 +1365,7 @@ static void ase_file_write_external_files_chunk(
       layers.insert(layers.end(), childLayers.begin(), childLayers.end());
     }
     else if (layer->isImage()) {
-      for (frame_t frame : fop->roi().selectedFrames()) {
+      for (frame_t frame : fop->roi().framesSequence()) {
         const Cel* cel = layer->cel(frame);
         if (cel && !cel->link()) {
           putExtentionIds(cel->data()->userData().propertiesMaps(), ext_files);
@@ -1435,6 +1440,11 @@ static void ase_file_write_tileset_chunk(FILE* f, FileOp* fop,
     flags |= ASE_TILESET_FLAG_EXTERNAL_FILE;
   else
     flags |= ASE_TILESET_FLAG_EMBEDDED;
+
+  doc::tile_flags tf = tileset->matchFlags();
+  if (tf & doc::tile_f_xflip) flags |= ASE_TILESET_FLAG_MATCH_XFLIP;
+  if (tf & doc::tile_f_yflip) flags |= ASE_TILESET_FLAG_MATCH_YFLIP;
+  if (tf & doc::tile_f_dflip) flags |= ASE_TILESET_FLAG_MATCH_DFLIP;
 
   fputl(si, f);         // Tileset ID
   fputl(flags, f);      // Tileset Flags
@@ -1686,8 +1696,12 @@ static void ase_ungroup_all(LayerGroup* group)
 
   for (Layer* child : list) {
     if (child->isGroup()) {
-      ase_ungroup_all(static_cast<LayerGroup*>(child));
-      group->removeLayer(child);
+      auto* childGroup = static_cast<LayerGroup*>(child);
+      ase_ungroup_all(childGroup);
+      group->removeLayer(childGroup);
+
+      ASSERT(childGroup->layersCount() == 0);
+      delete childGroup;
     }
     else if (group != root) {
       // Create a new name adding all group layer names
@@ -1704,11 +1718,6 @@ static void ase_ungroup_all(LayerGroup* group)
       group->removeLayer(child);
       root->addLayer(child);
     }
-  }
-
-  if (group != root) {
-    ASSERT(group->layersCount() == 0);
-    delete group;
   }
 }
 

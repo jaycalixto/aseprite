@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2019-2023  Igara Studio S.A.
+// Copyright (C) 2019-2024  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -18,6 +18,7 @@
 #include "app/commands/commands.h"
 #include "app/commands/new_params.h"
 #include "app/commands/params.h"
+#include "app/console.h"
 #include "app/context_access.h"
 #include "app/doc_api.h"
 #include "app/find_widget.h"
@@ -170,8 +171,14 @@ void NewLayerCommand::onExecute(Context* context)
   Scoped destroyPasteDoc(
     [&pasteDoc, context]{
       if (pasteDoc) {
-        DocDestroyer destroyer(context, pasteDoc, 100);
-        destroyer.destroyDocument();
+        try {
+          DocDestroyer destroyer(context, pasteDoc, 1000);
+          destroyer.destroyDocument();
+        }
+        catch (const CannotWriteDocException& e) {
+          LOG(ERROR, "%s\n", e.what());
+          Console::showException(e);
+        }
       }
     });
 
@@ -192,6 +199,9 @@ void NewLayerCommand::onExecute(Context* context)
     // The user have selected another document.
     if (oldActiveDocument != context->activeDocument()) {
       pasteDoc = context->activeDocument();
+      if (pasteDoc)
+        pasteDoc->setInhibitBackup(true);
+
       static_cast<UIContext*>(context)
         ->setActiveDocument(oldActiveDocument);
     }
@@ -208,6 +218,7 @@ void NewLayerCommand::onExecute(Context* context)
                       context->activeSite().grid():
                       doc::Grid(params().gridBounds()));
   tilesetInfo.baseIndex = 1;
+  tilesetInfo.matchFlags = 0;   // TODO default flags?
 
 #ifdef ENABLE_UI
   // If params specify to ask the user about the name...
@@ -236,15 +247,17 @@ void NewLayerCommand::onExecute(Context* context)
 
     name = window.name()->text();
     if (tilesetSelector) {
-      pref.tileset.baseIndex(tilesetSelector->getInfo().baseIndex);
       tilesetInfo = tilesetSelector->getInfo();
+
+      // Save information for next new tilemap layers
+      pref.tileset.baseIndex(tilesetInfo.baseIndex);
+      tilesetSelector->saveAdvancedPreferences();
     }
   }
 #endif
 
-  ContextWriter writer(reader);
   LayerGroup* parent = sprite->root();
-  Layer* activeLayer = writer.layer();
+  Layer* activeLayer = reader.layer();
   SelectedLayers selLayers = site.selectedLayers();
   if (activeLayer) {
     if (activeLayer->isGroup() &&
@@ -260,9 +273,8 @@ void NewLayerCommand::onExecute(Context* context)
 
   Layer* layer = nullptr;
   {
-    Tx tx(
-      writer.context(),
-      fmt::format(Strings::commands_NewLayer(), layerPrefix()));
+    ContextWriter writer(reader);
+    Tx tx(writer, Strings::commands_NewLayer(layerPrefix()));
     DocApi api = document->getApi(tx);
     bool afterBackground = false;
 
@@ -286,6 +298,7 @@ void NewLayerCommand::onExecute(Context* context)
         if (tilesetInfo.newTileset) {
           auto tileset = new Tileset(sprite, tilesetInfo.grid, 1);
           tileset->setBaseIndex(tilesetInfo.baseIndex);
+          tileset->setMatchFlags(tilesetInfo.matchFlags);
           tileset->setName(tilesetInfo.name);
 
           auto addTileset = new cmd::AddTileset(sprite, tileset);
@@ -499,17 +512,17 @@ std::string NewLayerCommand::onGetFriendlyName() const
 {
   std::string text;
   if (m_place == Place::BeforeActiveLayer)
-    text = fmt::format(Strings::commands_NewLayer_BeforeActiveLayer(), layerPrefix());
+    text = Strings::commands_NewLayer_BeforeActiveLayer(layerPrefix());
   else
-    text = fmt::format(Strings::commands_NewLayer(), layerPrefix());
+    text = Strings::commands_NewLayer(layerPrefix());
   if (params().fromClipboard())
-    text = fmt::format(Strings::commands_NewLayer_FromClipboard(), text);
+    text = Strings::commands_NewLayer_FromClipboard(text);
   if (params().viaCopy())
-    text = fmt::format(Strings::commands_NewLayer_ViaCopy(), text);
+    text = Strings::commands_NewLayer_ViaCopy(text);
   if (params().viaCut())
-    text = fmt::format(Strings::commands_NewLayer_ViaCut(), text);
+    text = Strings::commands_NewLayer_ViaCut(text);
   if (params().ask())
-    text = fmt::format(Strings::commands_NewLayer_WithDialog(), text);
+    text = Strings::commands_NewLayer_WithDialog(text);
   return text;
 }
 
