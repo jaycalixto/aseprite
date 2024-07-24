@@ -117,7 +117,10 @@ jobs:
       run: |
         ls -l /home/runner/work/aseprite/aseprite/build/bin/
         chmod +x /home/runner/work/aseprite/aseprite/build/bin/aseprite
-        tar cfz release${{ github.run_number }}.tgz -C /home/runner/work/aseprite/aseprite/build/bin .
+        mkdir /home/runner/work/aseprite/aseprite/build/bin/release
+        mv /home/runner/work/aseprite/aseprite/build/bin/data/ /home/runner/work/aseprite/aseprite/build/bin/release/
+        mv /home/runner/work/aseprite/aseprite/build/bin/aseprite /home/runner/work/aseprite/aseprite/build/bin/release/aseprite        
+        tar cfz release${{ github.run_number }}.tgz -C /home/runner/work/aseprite/aseprite/build/bin/release/ .
     - name: Upload binaries to release
       uses: svenstaro/upload-release-action@v2
       with:
