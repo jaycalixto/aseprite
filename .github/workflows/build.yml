@@ -14,7 +14,8 @@ jobs:
           - asset_name: aseprite-linux-amd64
         os: [ubuntu-latest]
         build_type: [RelWithDebInfo]
-        enable_ui: [off]
+        ui: [gui]
+        scripting: [lua]
     steps:
     - uses: actions/checkout@v4
       with:
