@@ -115,6 +115,7 @@ jobs:
     - name: Compress binnaries
       shell: bash
       run: |
+        ls -l /home/runner/work/aseprite/aseprite/build/bin/
         chmod +x /home/runner/work/aseprite/aseprite/build/bin/aseprite
         tar cfz release${{ github.run_number }}.tgz -C /home/runner/work/aseprite/aseprite/build/bin .
     - name: Upload binaries to release
